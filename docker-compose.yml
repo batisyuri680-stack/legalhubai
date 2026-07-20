@@ -1,0 +1,87 @@
+version: '3.9'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: legalhubai-postgres
+    environment:
+      POSTGRES_USER: legalhub
+      POSTGRES_PASSWORD: legalhub123
+      POSTGRES_DB: legalhubdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U legalhub"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - legalhubai-network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: legalhubai-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - legalhubai-network
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: legalhubai-backend
+    env_file:
+      - .env
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend/src:/app/src
+      - /app/node_modules
+    command: npm run dev
+    networks:
+      - legalhubai-network
+
+  # Frontend App
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: legalhubai-frontend
+    ports:
+      - "3001:3000"
+    env_file:
+      - .env
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/app:/app/app
+      - /app/node_modules
+    networks:
+      - legalhubai-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  legalhubai-network:
+    driver: bridge
