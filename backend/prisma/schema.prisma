@@ -1,0 +1,451 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+generator docs {
+  provider = "node node_modules/prisma-docs-generator"
+  output   = "./docs"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// ENUMS
+// ==========================================
+
+enum Role {
+  CLIENT
+  LAWYER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  BLOCKED
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum KYCStatus {
+  PENDING
+  IN_PROGRESS
+  VERIFIED
+  REJECTED
+}
+
+enum ConsultationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum PaymentProvider {
+  PAYME
+  CLICK
+}
+
+enum NotificationType {
+  ORDER_CREATED
+  ORDER_ACCEPTED
+  ORDER_REJECTED
+  CONSULTATION_SCHEDULED
+  MESSAGE_RECEIVED
+  REVIEW_RECEIVED
+  PAYMENT_SUCCESS
+  PAYMENT_FAILED
+  CONSULTATION_COMPLETED
+  PROFILE_UPDATED
+}
+
+// ==========================================
+// USER (Base model for all users)
+// ==========================================
+
+model User {
+  id                  String         @id @default(cuid())
+  email               String         @unique
+  passwordHash        String
+  firstName           String
+  lastName            String
+  phone               String?
+  avatar              String?
+  role                Role           @default(CLIENT)
+  status              UserStatus     @default(ACTIVE)
+  twoFactorEnabled    Boolean        @default(false)
+  twoFactorSecret     String?
+  lastLoginAt         DateTime?
+  loginAttempts       Int            @default(0)
+  lockedUntil         DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  deletedAt           DateTime?
+
+  // Relations
+  client              Client?
+  lawyer              Lawyer?
+  auditLogs           AuditLog[]
+  notifications       Notification[]
+  sentMessages        Message[]      @relation("sender")
+
+  @@index([email])
+  @@index([role])
+  @@index([status])
+  @@index([deletedAt])
+}
+
+// ==========================================
+// CLIENT
+// ==========================================
+
+model Client {
+  id                  String         @id @default(cuid())
+  userId              String         @unique
+  user                User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyName         String?
+  legalIssueAreas     String[]       @default([])
+  budget              Decimal?       @db.Decimal(10, 2)
+  preferredLanguage   String         @default("uz")
+  verificationStatus  VerificationStatus @default(PENDING)
+  verifiedAt          DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  deletedAt           DateTime?
+
+  // Relations
+  consultations       Consultation[]
+  orders              Order[]        @relation("client")
+  payments            Payment[]      @relation("client")
+  reviews             Review[]       @relation("client")
+
+  @@index([userId])
+  @@index([verificationStatus])
+  @@index([deletedAt])
+}
+
+// ==========================================
+// LAWYER
+// ==========================================
+
+model Lawyer {
+  id                  String         @id @default(cuid())
+  userId              String         @unique
+  user                User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  specializations     String[]       @default([])
+  experience          Int            @default(0)
+  bio                 String?
+  hourlyRate          Decimal        @db.Decimal(10, 2)
+  verificationStatus  VerificationStatus @default(PENDING)
+  verifiedAt          DateTime?
+  kycStatus           KYCStatus      @default(PENDING)
+  kycVerifiedAt       DateTime?
+  rating              Decimal        @default(0) @db.Decimal(3, 2)
+  reviewCount         Int            @default(0)
+  totalEarnings       Decimal        @default(0) @db.Decimal(15, 2)
+  isAvailable         Boolean        @default(true)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  deletedAt           DateTime?
+
+  // Relations
+  consultations       Consultation[]
+  orders              Order[]        @relation("lawyer")
+  payments            Payment[]      @relation("lawyer")
+  reviews             Review[]       @relation("lawyer")
+  calendarEvents      CalendarEvent[]
+  kyc                 KYCDocument?
+
+  @@index([userId])
+  @@index([specializations])
+  @@index([verificationStatus])
+  @@index([kycStatus])
+  @@index([rating])
+  @@index([isAvailable])
+  @@index([deletedAt])
+}
+
+// ==========================================
+// KYC DOCUMENT
+// ==========================================
+
+model KYCDocument {
+  id                  String         @id @default(cuid())
+  lawyerId            String         @unique
+  lawyer              Lawyer         @relation(fields: [lawyerId], references: [id], onDelete: Cascade)
+  documentType        String         // passport, id_card, license
+  documentNumber      String
+  documentUrl         String
+  issueDate           DateTime?
+  expiryDate          DateTime?
+  verificationStatus  VerificationStatus @default(PENDING)
+  verifiedAt          DateTime?
+  rejectionReason     String?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  @@index([lawyerId])
+  @@index([verificationStatus])
+}
+
+// ==========================================
+// CONSULTATION
+// ==========================================
+
+model Consultation {
+  id                  String         @id @default(cuid())
+  clientId            String
+  client              Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  lawyerId            String
+  lawyer              Lawyer         @relation(fields: [lawyerId], references: [id], onDelete: Cascade)
+  title               String         @db.VarChar(255)
+  description         String
+  status              ConsultationStatus @default(PENDING)
+  rejectionReason     String?
+  scheduledAt         DateTime?
+  duration            Int?           // minutes
+  videoCallUrl        String?
+  meetingNotes        String?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  deletedAt           DateTime?
+
+  // Relations
+  order               Order?         @relation("consultation")
+  messages            Message[]
+
+  @@index([clientId])
+  @@index([lawyerId])
+  @@index([status])
+  @@index([scheduledAt])
+  @@index([deletedAt])
+  @@unique([id, clientId, lawyerId])
+}
+
+// ==========================================
+// ORDER
+// ==========================================
+
+model Order {
+  id                  String         @id @default(cuid())
+  consultationId      String         @unique
+  consultation        Consultation   @relation("consultation", fields: [consultationId], references: [id], onDelete: Cascade)
+  clientId            String
+  client              Client         @relation("client", fields: [clientId], references: [id], onDelete: Cascade)
+  lawyerId            String
+  lawyer              Lawyer         @relation("lawyer", fields: [lawyerId], references: [id], onDelete: Cascade)
+  status              OrderStatus    @default(PENDING)
+  amount              Decimal        @db.Decimal(10, 2)
+  currency            String         @default("UZS")
+  disputeReason       String?
+  completedAt         DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  deletedAt           DateTime?
+
+  // Relations
+  payment             Payment?
+
+  @@index([consultationId])
+  @@index([clientId])
+  @@index([lawyerId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([deletedAt])
+}
+
+// ==========================================
+// PAYMENT
+// ==========================================
+
+model Payment {
+  id                  String         @id @default(cuid())
+  orderId             String         @unique
+  order               Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  clientId            String
+  client              Client         @relation("client", fields: [clientId], references: [id], onDelete: Cascade)
+  lawyerId            String
+  lawyer              Lawyer         @relation("lawyer", fields: [lawyerId], references: [id], onDelete: Cascade)
+  amount              Decimal        @db.Decimal(10, 2)
+  currency            String         @default("UZS")
+  provider            PaymentProvider
+  transactionId       String?        @unique
+  status              PaymentStatus  @default(PENDING)
+  metadata            Json?
+  failureReason       String?
+  paidAt              DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  deletedAt           DateTime?
+
+  @@index([orderId])
+  @@index([clientId])
+  @@index([lawyerId])
+  @@index([transactionId])
+  @@index([status])
+  @@index([paidAt])
+  @@index([deletedAt])
+}
+
+// ==========================================
+// MESSAGE (Chat)
+// ==========================================
+
+model Message {
+  id                  String         @id @default(cuid())
+  consultationId      String
+  consultation        Consultation   @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+  senderId            String
+  sender              User           @relation("sender", fields: [senderId], references: [id], onDelete: Cascade)
+  senderRole          Role
+  content             String
+  attachments         String[]       @default([])
+  isRead              Boolean        @default(false)
+  readAt              DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  deletedAt           DateTime?
+
+  @@index([consultationId])
+  @@index([senderId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+// ==========================================
+// REVIEW
+// ==========================================
+
+model Review {
+  id                  String         @id @default(cuid())
+  lawyerId            String
+  lawyer              Lawyer         @relation(fields: [lawyerId], references: [id], onDelete: Cascade)
+  clientId            String
+  client              Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  rating              Int            // 1-5
+  comment             String?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  deletedAt           DateTime?
+
+  @@index([lawyerId])
+  @@index([clientId])
+  @@unique([lawyerId, clientId])
+}
+
+// ==========================================
+// AUDIT LOG
+// ==========================================
+
+model AuditLog {
+  id                  String         @id @default(cuid())
+  userId              String
+  user                User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action              String         // CREATE, READ, UPDATE, DELETE
+  entity              String         // Model name
+  entityId            String
+  changes             Json?          // Old and new values
+  ipAddress           String?
+  userAgent           String?
+  statusCode          Int?
+  createdAt           DateTime       @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([entity])
+  @@index([createdAt])
+}
+
+// ==========================================
+// NOTIFICATION
+// ==========================================
+
+model Notification {
+  id                  String         @id @default(cuid())
+  userId              String
+  user                User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title               String
+  message             String
+  type                NotificationType
+  relatedId           String?        // ID of related entity
+  isRead              Boolean        @default(false)
+  readAt              DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([type])
+  @@index([createdAt])
+}
+
+// ==========================================
+// CALENDAR EVENT
+// ==========================================
+
+model CalendarEvent {
+  id                  String         @id @default(cuid())
+  lawyerId            String
+  lawyer              Lawyer         @relation(fields: [lawyerId], references: [id], onDelete: Cascade)
+  title               String
+  description         String?
+  startTime           DateTime
+  endTime             DateTime
+  isAvailable         Boolean        @default(true)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  @@index([lawyerId])
+  @@index([startTime])
+  @@index([endTime])
+}
+
+// ==========================================
+// LEGAL KNOWLEDGE BASE (For AI RAG)
+// ==========================================
+
+model LegalDocument {
+  id                  String         @id @default(cuid())
+  title               String
+  content             String         @db.Text
+  category            String         // Constitution, CivilCode, CriminalCode, etc.
+  source              String         // Official source URL
+  embedding           Unsupported("vector(1536)")?  // OpenAI embedding
+  metadata            Json?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  @@index([category])
+  @@index([title])
+  @@map("legal_documents")
+}
